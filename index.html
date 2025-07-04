@@ -8,8 +8,12 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/recharts@2.5.0/dist/Recharts.js"></script>
-    <script src="https://unpkg.com/lucide@0.263.1/dist/umd/lucide.js"></script>
+    
+    <!-- Fixed Recharts CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/recharts@2.5.0/lib/index.js"></script>
+    
+    <!-- Fixed Lucide CDN -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
     
     <!-- Firebase -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
@@ -110,6 +114,7 @@
             const [roomPassword, setRoomPassword] = useState('');
             const [showPasswordSetup, setShowPasswordSetup] = useState(false);
             const [passwordError, setPasswordError] = useState('');
+            const [showSetup, setShowSetup] = useState(false);
 
             const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
             const dataRef = useRef(null);
@@ -119,6 +124,7 @@
                 if (!isFirebaseConfigured) {
                     setIsLoading(false);
                     setConnectionStatus('setup-needed');
+                    setShowSetup(true);
                     return;
                 }
 
@@ -634,6 +640,96 @@
                         <div className="text-center">
                             <Loader className="animate-spin text-blue-600 mx-auto mb-4" size={48} />
                             <p className="text-gray-600">Connecting to database...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Password Setup Screen
+            if (showPasswordSetup) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
+                            <h1 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-3">
+                                <Lock className="text-blue-600" />
+                                Setup Room Password
+                            </h1>
+                            
+                            <p className="text-gray-600 mb-4">
+                                Set a password to protect your sales tracking room. Share this password with your team members.
+                            </p>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Create Password (min 4 characters)
+                                    </label>
+                                    <input
+                                        type="password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && setupPassword()}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="Enter password..."
+                                    />
+                                </div>
+
+                                {passwordError && (
+                                    <div className="text-red-600 text-sm">{passwordError}</div>
+                                )}
+
+                                <button
+                                    onClick={setupPassword}
+                                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+                                >
+                                    Setup Password
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Password Entry Screen
+            if (!isAuthenticated) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md w-full mx-4">
+                            <h1 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-3">
+                                <Lock className="text-blue-600" />
+                                Enter Room Password
+                            </h1>
+                            
+                            <p className="text-gray-600 mb-4">
+                                This sales tracking room is password protected. Enter the password to continue.
+                            </p>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Password
+                                    </label>
+                                    <input
+                                        type="password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && verifyPassword()}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        placeholder="Enter password..."
+                                    />
+                                </div>
+
+                                {passwordError && (
+                                    <div className="text-red-600 text-sm">{passwordError}</div>
+                                )}
+
+                                <button
+                                    onClick={verifyPassword}
+                                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+                                >
+                                    Enter
+                                </button>
+                            </div>
                         </div>
                     </div>
                 );
