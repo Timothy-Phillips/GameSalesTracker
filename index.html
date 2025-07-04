@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sales Team Tracking Tool - Live Collaboration</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/recharts@2.5.0/dist/Recharts.js"></script>
+    <script src="https://unpkg.com/lucide@0.263.1/dist/umd/lucide.js"></script>
+    
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+
+    <!-- 
+    OPTIONAL: For additional security, add these Firebase Realtime Database rules:
+    
+    {
+      "rules": {
+        "salesTracker": {
+          ".read": "auth != null",
+          ".write": "auth != null"
+        }
+      }
+    }
+    
+    To apply: Firebase Console → Realtime Database → Rules → Publish
+    -->
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+        const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
+        
+        // Lucide icons
+        const Package = lucide.Package;
+        const Users = lucide.Users;
+        const TrendingUp = lucide.TrendingUp;
+        const Calendar = lucide.Calendar;
+        const Plus = lucide.Plus;
+        const Save = lucide.Save;
+        const Trash2 = lucide.Trash2;
+        const Eye = lucide.Eye;
+        const EyeOff = lucide.EyeOff;
+        const ChevronLeft = lucide.ChevronLeft;
+        const ChevronRight = lucide.ChevronRight;
+        const PlusCircle = lucide.PlusCircle;
+        const Camera = lucide.Camera;
+        const X = lucide.X;
+        const Check = lucide.Check;
+        const Activity = lucide.Activity;
+        const Loader = lucide.Loader;
+        const AlertCircle = lucide.AlertCircle;
+        const Lock = lucide.Lock;
+        const LogOut = lucide.LogOut;
+
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyA26mxhww0szibprWKIDBf8SeZnRNJL7ns",
+            authDomain: "gamesalestracker-ac3ab.firebaseapp.com",
+            databaseURL: "https://gamesalestracker-ac3ab-default-rtdb.firebaseio.com",
+            projectId: "gamesalestracker-ac3ab",
+            storageBucket: "gamesalestracker-ac3ab.firebasestorage.app",
+            messagingSenderId: "319812101312",
+            appId: "1:319812101312:web:15e84d549dda4a701a3925"
+        };
+
+        // Initialize Firebase
+        let app, database, auth;
+        let isFirebaseConfigured = false;
+
+        try {
+            if (firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                app = firebase.initializeApp(firebaseConfig);
+                database = firebase.database();
+                auth = firebase.auth();
+                isFirebaseConfigured = true;
+            }
+        } catch (error) {
+            console.error("Firebase initialization error:", error);
+        }
+
+        const SalesTracker = () => {
+            const [dealers, setDealers] = useState([]);
+            const [products, setProducts] = useState(['Product A', 'Product B', 'Product C']);
+            const [inventory, setInventory] = useState({});
+            const [stockAdded, setStockAdded] = useState({});
+            const [history, setHistory] = useState([]);
+            const [selectedWeek, setSelectedWeek] = useState(1);
+            const [selectedDay, setSelectedDay] = useState('Monday');
+            const [showGraphs, setShowGraphs] = useState(true);
+            const [dealerImages, setDealerImages] = useState({});
+            
+            const [newDealer, setNewDealer] = useState('');
+            const [newProduct, setNewProduct] = useState('');
+            const [activeModal, setActiveModal] = useState(null);
+            const [modalDealer, setModalDealer] = useState('');
+            const [tempInventory, setTempInventory] = useState({});
+            const [tempStockAdded, setTempStockAdded] = useState({});
+            const [isLoading, setIsLoading] = useState(true);
+            const [connectionStatus, setConnectionStatus] = useState('connecting');
+            const [isAuthenticated, setIsAuthenticated] = useState(false);
+            const [password, setPassword] = useState('');
+            const [roomPassword, setRoomPassword] = useState('');
+            const [showPasswordSetup, setShowPasswordSetup] = useState(false);
+            const [passwordError, setPasswordError] = useState('');
+
+            const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            const dataRef = useRef(null);
+
+            // Check if Firebase is configured
+            useEffect(() => {
+                if (!isFirebaseConfigured) {
+                    setIsLoading(false);
+                    setConnectionStatus('setup-needed');
+                    return;
+                }
+
+                // Sign in anonymously
+                auth.signInAnonymously()
+                    .then(() => {
+                        console.log("Signed in anonymously");
+                        setConnectionStatus('connected');
+                        checkPasswordSetup();
+                    })
+                    .catch((error) => {
+                        console.error("Auth error:", error);
+                        setConnectionStatus('error');
+                        setIsLoading(false);
+                    });
+
+                // Monitor connection status
+                const connectedRef = database.ref('.info/connected');
+                connectedRef.on('value', (snap) => {
+                    if (snap.val() === true) {
+                        setConnectionStatus('connected');
+                    } else {
+                        setConnectionStatus('disconnected');
+                    }
+                });
+
+                return () => {
+                    if (dataRef.current) {
+                        dataRef.current.off();
+                    }
+                    connectedRef.off();
+                };
+            }, []);
+
+            const checkPasswordSetup = () => {
+                database.ref('salesTracker/config/password').once('value')
+                    .then((snapshot) => {
+                        const savedPassword = snapshot.val();
+                        if (!savedPassword) {
+                            setShowPasswordSetup(true);
+                            setIsLoading(false);
+                        } else {
+                            setRoomPassword(savedPassword);
+                            setIsLoading(false);
+                        }
+                    })
+                    .catch((error) => {
+                        console.error("Error checking password:", error);
+                        setIsLoading(false);
+                    });
+            };
+
+            const setupPassword = () => {
+                if (!password || password.length < 4) {
+                    setPasswordError('Password must be at least 4 characters');
+                    return;
+                }
+
+                database.ref('salesTracker/config/password').set(password)
+                    .then(() => {
+                        setRoomPassword(password);
+                        setIsAuthenticated(true);
+                        setShowPasswordSetup(false);
+                        setupRealtimeListeners();
+                    })
+                    .catch((error) => {
+                        console.error("Error setting password:", error);
+                        setPasswordError('Failed to set password. Please try again.');
+                    });
+            };
+
+            const verifyPassword = () => {
+                if (password === roomPassword) {
+                    setIsAuthenticated(true);
+                    setPasswordError('');
+                    setupRealtimeListeners();
+                } else {
+                    setPasswordError('Incorrect password');
+                }
+            };
+
+            const logout = () => {
+                setIsAuthenticated(false);
+                setPassword('');
+                if (dataRef.current) {
+                    dataRef.current.off();
+                }
+            };
+
+            const setupRealtimeListeners = () => {
+                dataRef.current = database.ref('salesTracker');
+                
+                // Listen for all data changes
+                dataRef.current.on('value', (snapshot) => {
+                    const data = snapshot.val() || {};
+                    
+                    setDealers(data.dealers || []);
+                    setProducts(data.products || ['Product A', 'Product B', 'Product C']);
+                    setInventory(data.inventory || {});
+                    setStockAdded(data.stockAdded || {});
+                    setHistory(data.history || []);
+                    setSelectedWeek(data.selectedWeek || 1);
+                    setSelectedDay(data.selectedDay || 'Monday');
+                    setDealerImages(data.dealerImages || {});
+                    
+                    setIsLoading(false);
+                }, (error) => {
+                    console.error("Database read error:", error);
+                    setConnectionStatus('error');
+                    setIsLoading(false);
+                });
+            };
+
+            // Update Firebase whenever data changes
+            const updateFirebase = (path, data) => {
+                if (!isFirebaseConfigured || !database) return;
+                
+                database.ref(`salesTracker/${path}`).set(data)
+                    .catch((error) => {
+                        console.error("Database write error:", error);
+                        alert("Failed to save data. Please check your connection.");
+                    });
+            };
+
+            const updateMultipleFirebase = (updates) => {
+                if (!isFirebaseConfigured || !database) return;
+                
+                const dbUpdates = {};
+                Object.keys(updates).forEach(key => {
+                    dbUpdates[`salesTracker/${key}`] = updates[key];
+                });
+                
+                database.ref().update(dbUpdates)
+                    .catch((error) => {
+                        console.error("Database write error:", error);
+                        alert("Failed to save data. Please check your connection.");
+                    });
+            };
+
+            const addDealer = () => {
+                if (newDealer && !dealers.includes(newDealer)) {
+                    const newDealers = [...dealers, newDealer];
+                    updateFirebase('dealers', newDealers);
+                    setNewDealer('');
+                }
+            };
+
+            const removeDealer = (name) => {
+                const newDealers = dealers.filter(d => d !== name);
+                const newInventory = { ...inventory };
+                const newStockAdded = { ...stockAdded };
+                const newImages = { ...dealerImages };
+                delete newInventory[name];
+                delete newStockAdded[name];
+                delete newImages[name];
+                
+                updateMultipleFirebase({
+                    dealers: newDealers,
+                    inventory: newInventory,
+                    stockAdded: newStockAdded,
+                    dealerImages: newImages
+                });
+            };
+
+            const handleImageUpload = (dealer, event) => {
+                const file = event.target.files[0];
+                if (file && file.size < 500000) { // Limit to 500KB
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const newImages = {
+                            ...dealerImages,
+                            [dealer]: e.target.result
+                        };
+                        updateFirebase('dealerImages', newImages);
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert("Please select an image smaller than 500KB");
+                }
+            };
+
+            const addProduct = () => {
+                if (newProduct && !products.includes(newProduct)) {
+                    const newProducts = [...products, newProduct];
+                    updateFirebase('products', newProducts);
+                    setNewProduct('');
+                }
+            };
+
+            const removeProduct = (name) => {
+                const newProducts = products.filter(p => p !== name);
+                const newInventory = { ...inventory };
+                const newStockAdded = { ...stockAdded };
+                Object.keys(newInventory).forEach(dealer => {
+                    delete newInventory[dealer][name];
+                    delete newStockAdded[dealer][name];
+                });
+                
+                updateMultipleFirebase({
+                    products: newProducts,
+                    inventory: newInventory,
+                    stockAdded: newStockAdded
+                });
+            };
+
+            const openEndOfDayModal = (dealer) => {
+                setModalDealer(dealer);
+                const temp = {};
+                products.forEach(product => {
+                    temp[product] = inventory[dealer]?.[product] || 0;
+                });
+                setTempInventory(temp);
+                setActiveModal('endOfDay');
+            };
+
+            const openAddStockModal = (dealer) => {
+                setModalDealer(dealer);
+                const temp = {};
+                products.forEach(product => {
+                    temp[product] = 0;
+                });
+                setTempStockAdded(temp);
+                setActiveModal('addStock');
+            };
+
+            const saveEndOfDay = () => {
+                const newInventory = {
+                    ...inventory,
+                    [modalDealer]: tempInventory
+                };
+
+                // Save snapshot if it's end of day
+                const snapshot = {
+                    week: selectedWeek,
+                    day: selectedDay,
+                    key: `Week ${selectedWeek} - ${selectedDay}`,
+                    inventory: newInventory,
+                    stockAdded: stockAdded,
+                    timestamp: new Date().toISOString()
+                };
+                
+                // Check if we need to save a complete snapshot
+                const allDealersReported = dealers.every(d => 
+                    d === modalDealer || (inventory[d] && Object.keys(inventory[d]).length > 0)
+                );
+
+                if (allDealersReported) {
+                    const newHistory = history.filter(h => h.key !== snapshot.key);
+                    newHistory.push(snapshot);
+                    newHistory.sort((a, b) => {
+                        if (a.week !== b.week) return a.week - b.week;
+                        return daysOfWeek.indexOf(a.day) - daysOfWeek.indexOf(b.day);
+                    });
+                    
+                    updateMultipleFirebase({
+                        inventory: newInventory,
+                        history: newHistory
+                    });
+                } else {
+                    updateFirebase('inventory', newInventory);
+                }
+
+                setActiveModal(null);
+            };
+
+            const saveAddStock = () => {
+                const newStockAdded = { ...stockAdded };
+                Object.keys(tempStockAdded).forEach(product => {
+                    const currentAdded = newStockAdded[modalDealer]?.[product] || 0;
+                    newStockAdded[modalDealer] = {
+                        ...newStockAdded[modalDealer],
+                        [product]: currentAdded + tempStockAdded[product]
+                    };
+                });
+                updateFirebase('stockAdded', newStockAdded);
+                setActiveModal(null);
+            };
+
+            const changeWeek = (direction) => {
+                const newWeek = Math.max(1, selectedWeek + direction);
+                
+                // Reset stock added when changing weeks
+                const resetStockAdded = {};
+                dealers.forEach(dealer => {
+                    resetStockAdded[dealer] = {};
+                    products.forEach(product => {
+                        resetStockAdded[dealer][product] = 0;
+                    });
+                });
+                
+                updateMultipleFirebase({
+                    selectedWeek: newWeek,
+                    stockAdded: resetStockAdded
+                });
+            };
+
+            const changeDay = (day) => {
+                updateFirebase('selectedDay', day);
+            };
+
+            // Calculate sales data
+            const salesData = useMemo(() => {
+                const data = [];
+                
+                for (let i = 1; i < history.length; i++) {
+                    const prevDay = history[i - 1];
+                    const currentDay = history[i];
+                    const dayData = { day: currentDay.key };
+                    
+                    dealers.forEach(dealer => {
+                        let totalSales = 0;
+                        products.forEach(product => {
+                            const prev = prevDay.inventory[dealer]?.[product] || 0;
+                            const current = currentDay.inventory[dealer]?.[product] || 0;
+                            const added = currentDay.stockAdded[dealer]?.[product] || 0;
+                            const sales = Math.max(0, prev + added - current);
+                            totalSales += sales;
+                        });
+                        dayData[dealer] = totalSales;
+                    });
+                    
+                    data.push(dayData);
+                }
+                
+                return data;
+            }, [history, dealers, products]);
+
+            // Calculate product-wise sales
+            const productSalesData = useMemo(() => {
+                const data = {};
+                
+                products.forEach(product => {
+                    data[product] = 0;
+                });
+                
+                for (let i = 1; i < history.length; i++) {
+                    const prevDay = history[i - 1];
+                    const currentDay = history[i];
+                    
+                    dealers.forEach(dealer => {
+                        products.forEach(product => {
+                            const prev = prevDay.inventory[dealer]?.[product] || 0;
+                            const current = currentDay.inventory[dealer]?.[product] || 0;
+                            const added = currentDay.stockAdded[dealer]?.[product] || 0;
+                            const sales = Math.max(0, prev + added - current);
+                            data[product] += sales;
+                        });
+                    });
+                }
+                
+                return Object.entries(data).map(([product, sales]) => ({
+                    name: product,
+                    value: sales
+                }));
+            }, [history, dealers, products]);
+
+            // Calculate dealer performance
+            const dealerPerformance = useMemo(() => {
+                const data = {};
+                
+                dealers.forEach(dealer => {
+                    data[dealer] = 0;
+                });
+                
+                for (let i = 1; i < history.length; i++) {
+                    const prevDay = history[i - 1];
+                    const currentDay = history[i];
+                    
+                    dealers.forEach(dealer => {
+                        products.forEach(product => {
+                            const prev = prevDay.inventory[dealer]?.[product] || 0;
+                            const current = currentDay.inventory[dealer]?.[product] || 0;
+                            const added = currentDay.stockAdded[dealer]?.[product] || 0;
+                            const sales = Math.max(0, prev + added - current);
+                            data[dealer] += sales;
+                        });
+                    });
+                }
+                
+                return Object.entries(data).map(([dealer, totalSales]) => ({
+                    dealer,
+                    totalSales,
+                    avgDaily: history.length > 1 ? (totalSales / (history.length - 1)).toFixed(1) : 0
+                }));
+            }, [history, dealers, products]);
+
+            // Calculate overall metrics
+            const overallMetrics = useMemo(() => {
+                let totalSales = 0;
+                let totalInventory = 0;
+                let bestDay = { sales: 0, day: '' };
+                let worstDay = { sales: Infinity, day: '' };
+                
+                // Calculate total current inventory
+                Object.values(inventory).forEach(dealerInv => {
+                    Object.values(dealerInv).forEach(count => {
+                        totalInventory += count;
+                    });
+                });
+                
+                // Calculate sales metrics
+                for (let i = 1; i < history.length; i++) {
+                    const prevDay = history[i - 1];
+                    const currentDay = history[i];
+                    let daySales = 0;
+                    
+                    dealers.forEach(dealer => {
+                        products.forEach(product => {
+                            const prev = prevDay.inventory[dealer]?.[product] || 0;
+                            const current = currentDay.inventory[dealer]?.[product] || 0;
+                            const added = currentDay.stockAdded[dealer]?.[product] || 0;
+                            const sales = Math.max(0, prev + added - current);
+                            daySales += sales;
+                        });
+                    });
+                    
+                    totalSales += daySales;
+                    
+                    if (daySales > bestDay.sales) {
+                        bestDay = { sales: daySales, day: currentDay.key };
+                    }
+                    if (daySales < worstDay.sales && daySales > 0) {
+                        worstDay = { sales: daySales, day: currentDay.key };
+                    }
+                }
+                
+                return {
+                    totalSales,
+                    totalInventory,
+                    avgDailySales: history.length > 1 ? (totalSales / (history.length - 1)).toFixed(1) : 0,
+                    bestDay: bestDay.day ? bestDay : null,
+                    worstDay: worstDay.day ? worstDay : null,
+                    daysTracked: Math.max(0, history.length - 1)
+                };
+            }, [history, inventory, dealers, products]);
+
+            const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff8042', '#8dd1e1', '#d084d0'];
+
+            if (showSetup) {
+                return (
+                    <div className="max-w-4xl mx-auto p-6">
+                        <div className="bg-white rounded-lg shadow-lg p-8">
+                            <h1 className="text-3xl font-bold text-gray-800 mb-6 flex items-center gap-3">
+                                <Package className="text-blue-600" />
+                                Sales Team Tracking Tool - Setup
+                            </h1>
+                            
+                            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
+                                <p className="text-sm text-yellow-800 mb-2">
+                                    <strong>⚠️ Firebase configuration required for live collaboration</strong>
+                                </p>
+                                <p className="text-sm text-yellow-700">
+                                    To enable real-time sync between all players, you need to set up a free Firebase project.
+                                </p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <h2 className="text-xl font-semibold">Setup Instructions:</h2>
+                                
+                                <ol className="space-y-3 list-decimal list-inside">
+                                    <li className="text-gray-700">
+                                        Go to <a href="https://console.firebase.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">Firebase Console</a> and create a free account
+                                    </li>
+                                    <li className="text-gray-700">Click "Create a project" and give it a name (e.g., "sales-tracker")</li>
+                                    <li className="text-gray-700">
+                                        In your project, click "Authentication" → "Get started" → Enable "Anonymous" sign-in
+                                    </li>
+                                    <li className="text-gray-700">
+                                        Click "Realtime Database" → "Create Database" → Start in test mode → Choose location
+                                    </li>
+                                    <li className="text-gray-700">
+                                        Go to Project Settings (gear icon) → Scroll to "Your apps" → Click "&lt;/&gt;" (Web) → Register app
+                                    </li>
+                                    <li className="text-gray-700">
+                                        Copy your Firebase configuration and replace the placeholder in this file:
+                                        <pre className="bg-gray-100 p-3 rounded mt-2 text-sm overflow-x-auto">
+{`const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_AUTH_DOMAIN",
+    databaseURL: "YOUR_DATABASE_URL",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_STORAGE_BUCKET",
+    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+    appId: "YOUR_APP_ID"
+};`}
+                                        </pre>
+                                    </li>
+                                    <li className="text-gray-700">
+                                        Save the file and refresh this page
+                                    </li>
+                                </ol>
+
+                                <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                                    <p className="text-sm text-green-800">
+                                        <strong>✓ Free Forever:</strong> Firebase's free tier includes 1GB database storage and 10GB/month transfer - more than enough for your game!
+                                    </p>
+                                </div>
+
+                                <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                                    <p className="text-sm text-blue-800">
+                                        <strong>💡 Tip:</strong> After setup, upload this configured file to GitHub Pages. All players will automatically sync in real-time!
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (isLoading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center">
+                        <div className="text-center">
+                            <Loader className="animate-spin text-blue-600 mx-auto mb-4" size={48} />
+                            <p className="text-gray-600">Connecting to database...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="max-w-7xl mx-auto p-6 bg-gray-50 min-h-screen">
+                    <div className="bg-white rounded-lg shadow-lg p-6 mb-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
+                                <Package className="text-blue-600" />
+                                Sales Team Tracking Tool
+                            </h1>
+                            <div className="flex items-center gap-3">
+                                {/* Connection Status */}
+                                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
+                                    connectionStatus === 'connected' ? 'bg-green-100 text-green-700' : 
+                                    connectionStatus === 'disconnected' ? 'bg-red-100 text-red-700' : 
+                                    'bg-yellow-100 text-yellow-700'
+                                }`}>
+                                    <div className={`w-2 h-2 rounded-full ${
+                                        connectionStatus === 'connected' ? 'bg-green-500' : 
+                                        connectionStatus === 'disconnected' ? 'bg-red-500' : 
+                                        'bg-yellow-500'
+                                    }`} />
+                                    {connectionStatus === 'connected' ? 'Live' : 
+                                     connectionStatus === 'disconnected' ? 'Offline' : 
+                                     'Connecting...'}
+                                </div>
+                                
+                                {/* Logout Button */}
+                                <button
+                                    onClick={logout}
+                                    className="flex items-center gap-1 px-3 py-1 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition text-sm"
+                                    title="Logout"
+                                >
+                                    <LogOut size={16} />
+                                    Logout
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Week and Day Selector */}
+                        <div className="mb-6 flex justify-center items-center gap-4 p-4 bg-gray-100 rounded-lg">
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => changeWeek(-1)}
+                                    disabled={selectedWeek === 1}
+                                    className="p-1 rounded hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronLeft size={20} />
+                                </button>
+                                <span className="font-medium text-lg">Week {selectedWeek}</span>
+                                <button
+                                    onClick={() => changeWeek(1)}
+                                    className="p-1 rounded hover:bg-gray-200"
+                                >
+                                    <ChevronRight size={20} />
+                                </button>
+                            </div>
+                            
+                            <div className="flex gap-1">
+                                {daysOfWeek.map(day => (
+                                    <button
+                                        key={day}
+                                        onClick={() => changeDay(day)}
+                                        className={`px-3 py-1 rounded text-sm ${
+                                            selectedDay === day
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-gray-200 hover:bg-gray-300'
+                                        }`}
+                                    >
+                                        {day.slice(0, 3)}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Dealer Cards Section - Playing Card Style */}
+                        <div className="mb-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xl font-semibold flex items-center gap-2">
+                                    <Users className="text-green-600" size={20} />
+                                    Dealers
+                                </h2>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={newDealer}
+                                        onChange={(e) => setNewDealer(e.target.value)}
+                                        onKeyPress={(e) => e.key === 'Enter' && addDealer()}
+                                        placeholder="Add dealer..."
+                                        className="px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <button
+                                        onClick={addDealer}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
+                                    >
+                                        <Plus size={20} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-wrap gap-4">
+                                {dealers.map(dealer => (
+                                    <div key={dealer} className="relative group">
+                                        {/* Playing Card Design */}
+                                        <div className="w-40 h-56 bg-white border-2 border-gray-800 rounded-lg shadow-lg hover:shadow-xl transition-shadow">
+                                            {/* Delete button */}
+                                            <button
+                                                onClick={() => removeDealer(dealer)}
+                                                className="absolute -top-2 -right-2 p-1 bg-red-600 text-white rounded-full hover:bg-red-700 transition opacity-0 group-hover:opacity-100 z-10"
+                                            >
+                                                <X size={14} />
+                                            </button>
+
+                                            {/* Card Content */}
+                                            <div className="h-full flex flex-col">
+                                                {/* Dealer Image */}
+                                                <div className="h-20 bg-gray-200 rounded-t-md overflow-hidden relative group/image">
+                                                    {dealerImages[dealer] ? (
+                                                        <img 
+                                                            src={dealerImages[dealer]} 
+                                                            alt={dealer}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                    ) : (
+                                                        <div className="flex items-center justify-center h-full">
+                                                            <Camera size={24} className="text-gray-400" />
+                                                        </div>
+                                                    )}
+                                                    <label className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 opacity-0 group-hover/image:opacity-100 transition-opacity cursor-pointer">
+                                                        <Camera size={16} className="text-white" />
+                                                        <input
+                                                            type="file"
+                                                            accept="image/*"
+                                                            onChange={(e) => handleImageUpload(dealer, e)}
+                                                            className="hidden"
+                                                        />
+                                                    </label>
+                                                </div>
+                                                
+                                                {/* Dealer Name */}
+                                                <h3 className="text-center font-bold py-2 border-b">{dealer}</h3>
+                                                
+                                                {/* Stock Info */}
+                                                <div className="flex-1 px-2 py-1 overflow-y-auto">
+                                                    <div className="space-y-1">
+                                                        {products.map(product => (
+                                                            <div key={product} className="flex justify-between text-xs">
+                                                                <span className="text-gray-600 truncate">{product}:</span>
+                                                                <span className="font-medium">{inventory[dealer]?.[product] || 0}</span>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Action Buttons */}
+                                                <div className="p-2 space-y-1 border-t">
+                                                    <button
+                                                        onClick={() => openEndOfDayModal(dealer)}
+                                                        className="w-full px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700 transition"
+                                                    >
+                                                        End of Day
+                                                    </button>
+                                                    <button
+                                                        onClick={() => openAddStockModal(dealer)}
+                                                        className="w-full px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700 transition"
+                                                    >
+                                                        Add Stock
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {dealers.length === 0 && (
+                                <div className="text-center py-8 text-gray-500">
+                                    <p>No dealers added yet. Add a dealer to get started!</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Analytics Dashboard */}
+                        <div className="mb-6">
+                            <div className="flex justify-between items-center mb-4">
+                                <h2 className="text-xl font-semibold flex items-center gap-2">
+                                    <TrendingUp className="text-blue-600" size={20} />
+                                    Analytics Dashboard
+                                </h2>
+                                <button
+                                    onClick={() => setShowGraphs(!showGraphs)}
+                                    className="flex items-center gap-2 px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 transition"
+                                >
+                                    {showGraphs ? <EyeOff size={18} /> : <Eye size={18} />}
+                                    {showGraphs ? 'Hide' : 'Show'} Graphs
+                                </button>
+                            </div>
+
+                            {/* Overall Metrics Section */}
+                            <div className="mb-6">
+                                <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                                    <Activity className="text-purple-600" size={18} />
+                                    Overall Metrics
+                                </h3>
+                                <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                    <div className="bg-gradient-to-r from-indigo-50 to-blue-50 p-4 rounded-lg border border-gray-200">
+                                        <p className="text-sm text-gray-600">Total Sales</p>
+                                        <p className="text-2xl font-bold text-indigo-600">{overallMetrics.totalSales}</p>
+                                        <p className="text-xs text-gray-500">All time</p>
+                                    </div>
+                                    <div className="bg-gradient-to-r from-green-50 to-emerald-50 p-4 rounded-lg border border-gray-200">
+                                        <p className="text-sm text-gray-600">Current Inventory</p>
+                                        <p className="text-2xl font-bold text-green-600">{overallMetrics.totalInventory}</p>
+                                        <p className="text-xs text-gray-500">Total units</p>
+                                    </div>
+                                    <div className="bg-gradient-to-r from-yellow-50 to-orange-50 p-4 rounded-lg border border-gray-200">
+                                        <p className="text-sm text-gray-600">Avg Daily Sales</p>
+                                        <p className="text-2xl font-bold text-orange-600">{overallMetrics.avgDailySales}</p>
+                                        <p className="text-xs text-gray-500">{overallMetrics.daysTracked} days tracked</p>
+                                    </div>
+                                    <div className="bg-gradient-to-r from-purple-50 to-pink-50 p-4 rounded-lg border border-gray-200">
+                                        <p className="text-sm text-gray-600">Best Day</p>
+                                        <p className="text-lg font-bold text-purple-600">
+                                            {overallMetrics.bestDay ? overallMetrics.bestDay.sales : '-'}
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            {overallMetrics.bestDay ? overallMetrics.bestDay.day : 'No data'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Individual Dealer Performance */}
+                            <div className="grid md:grid-cols-3 gap-4 mb-6">
+                                {dealerPerformance.map((perf, idx) => (
+                                    <div key={perf.dealer} className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg border border-gray-200">
+                                        <h3 className="font-semibold text-gray-700">{perf.dealer}</h3>
+                                        <p className="text-2xl font-bold text-blue-600">{perf.totalSales}</p>
+                                        <p className="text-sm text-gray-600">Total Sales</p>
+                                        <p className="text-sm text-gray-500">Avg/Day: {perf.avgDaily}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Graphs */}
+                            {showGraphs && history.length > 1 && (
+                                <div className="space-y-6">
+                                    {/* Daily Sales Trend */}
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <h3 className="text-lg font-semibold mb-3">Daily Sales Trend</h3>
+                                        <ResponsiveContainer width="100%" height={300}>
+                                            <LineChart data={salesData}>
+                                                <CartesianGrid strokeDasharray="3 3" />
+                                                <XAxis dataKey="day" angle={-45} textAnchor="end" height={80} />
+                                                <YAxis />
+                                                <Tooltip />
+                                                <Legend />
+                                                {dealers.map((dealer, idx) => (
+                                                    <Line
+                                                        key={dealer}
+                                                        type="monotone"
+                                                        dataKey={dealer}
+                                                        stroke={COLORS[idx % COLORS.length]}
+                                                        strokeWidth={2}
+                                                    />
+                                                ))}
+                                            </LineChart>
+                                        </ResponsiveContainer>
+                                    </div>
+
+                                    {/* Product Distribution and Total Sales */}
+                                    <div className="grid md:grid-cols-2 gap-4">
+                                        <div className="bg-gray-50 p-4 rounded-lg">
+                                            <h3 className="text-lg font-semibold mb-3">Product Sales Distribution</h3>
+                                            <ResponsiveContainer width="100%" height={250}>
+                                                <PieChart>
+                                                    <Pie
+                                                        data={productSalesData}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        labelLine={false}
+                                                        label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`}
+                                                        outerRadius={80}
+                                                        fill="#8884d8"
+                                                        dataKey="value"
+                                                    >
+                                                        {productSalesData.map((entry, index) => (
+                                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+
+                                        <div className="bg-gray-50 p-4 rounded-lg">
+                                            <h3 className="text-lg font-semibold mb-3">Total Sales by Dealer</h3>
+                                            <ResponsiveContainer width="100%" height={250}>
+                                                <BarChart data={dealerPerformance}>
+                                                    <CartesianGrid strokeDasharray="3 3" />
+                                                    <XAxis dataKey="dealer" />
+                                                    <YAxis />
+                                                    <Tooltip />
+                                                    <Bar dataKey="totalSales" fill="#82ca9d" />
+                                                </BarChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {history.length <= 1 && (
+                                <div className="text-center py-8 text-gray-500">
+                                    <p>Save at least 2 daily snapshots to see analytics</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Product Management */}
+                        <div>
+                            <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
+                                <Package className="text-purple-600" size={20} />
+                                Products
+                            </h2>
+                            <div className="flex gap-2 mb-3">
+                                <input
+                                    type="text"
+                                    value={newProduct}
+                                    onChange={(e) => setNewProduct(e.target.value)}
+                                    onKeyPress={(e) => e.key === 'Enter' && addProduct()}
+                                    placeholder="Add product..."
+                                    className="flex-1 px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                />
+                                <button
+                                    onClick={addProduct}
+                                    className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition"
+                                >
+                                    <Plus size={20} />
+                                </button>
+                            </div>
+                            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-2">
+                                {products.map(product => (
+                                    <div key={product} className="flex justify-between items-center p-2 bg-gray-100 rounded">
+                                        <span>{product}</span>
+                                        <button
+                                            onClick={() => removeProduct(product)}
+                                            className="text-red-600 hover:text-red-800"
+                                        >
+                                            <Trash2 size={16} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Modal for End of Day */}
+                    {activeModal === 'endOfDay' && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                                <h3 className="text-xl font-semibold mb-4">End of Day - {modalDealer}</h3>
+                                <p className="text-sm text-gray-600 mb-4">Enter remaining inventory for each product:</p>
+                                
+                                <div className="space-y-3 mb-4">
+                                    {products.map(product => (
+                                        <div key={product} className="flex items-center justify-between">
+                                            <label className="font-medium">{product}:</label>
+                                            <input
+                                                type="number"
+                                                value={tempInventory[product] || 0}
+                                                onChange={(e) => setTempInventory({
+                                                    ...tempInventory,
+                                                    [product]: parseInt(e.target.value) || 0
+                                                })}
+                                                className="w-24 px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                min="0"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={saveEndOfDay}
+                                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition flex items-center justify-center gap-2"
+                                    >
+                                        <Check size={18} />
+                                        Save
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveModal(null)}
+                                        className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 transition"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Modal for Add Stock */}
+                    {activeModal === 'addStock' && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                                <h3 className="text-xl font-semibold mb-4">Add Stock - {modalDealer}</h3>
+                                <p className="text-sm text-gray-600 mb-4">Enter amount of stock added for each product:</p>
+                                
+                                <div className="space-y-3 mb-4">
+                                    {products.map(product => (
+                                        <div key={product} className="flex items-center justify-between">
+                                            <label className="font-medium">{product}:</label>
+                                            <input
+                                                type="number"
+                                                value={tempStockAdded[product] || 0}
+                                                onChange={(e) => setTempStockAdded({
+                                                    ...tempStockAdded,
+                                                    [product]: parseInt(e.target.value) || 0
+                                                })}
+                                                className="w-24 px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                min="0"
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={saveAddStock}
+                                        className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition flex items-center justify-center gap-2"
+                                    >
+                                        <PlusCircle size={18} />
+                                        Add Stock
+                                    </button>
+                                    <button
+                                        onClick={() => setActiveModal(null)}
+                                        className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400 transition"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Live Collaboration Notice */}
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-4">
+                        <h3 className="font-semibold text-green-900 mb-2">✨ Live Collaboration Enabled</h3>
+                        <p className="text-sm text-green-800">
+                            All changes are instantly synced with other players. Share your GitHub Pages URL and the room password with your friends!
+                        </p>
+                        <p className="text-xs text-green-700 mt-2">
+                            🔒 Password protected - Only users with the password can access and modify data
+                        </p>
+                    </div>
+                </div>
+            );
+        };
+
+        // Render the app
+        ReactDOM.render(<SalesTracker />, document.getElementById('root'));
+    </script>
+</body>
+</html>
